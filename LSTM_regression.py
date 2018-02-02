@@ -40,7 +40,30 @@ config_path = os.path.dirname(os.path.realpath(sys.argv[0]))
 config_path = config_path + '/configuration.ini'
 parser.readfp(open(config_path))
 # Read configuration parameters
-machine = parser.get('general','machine_name')
+machine = parser.get(machine,'machine_name')
+dbs_A_path = parser.get(machine,'dbs_A_path')
+dbs_B_path = parser.get(machine,'dbs_B_path')
+clustering_results_path = parser.get(machine,'clustering_results_path')
+shape_classifier_path = parser.get(machine,'shape_classifier_path')
+#### SETTINGS ####
+dbs_A_path = '/home/jolwave/PopularityChallenge/first_day_DSA'
+dbs_B_path = '/home/jolwave/PopularityChallenge/first_day_DSB'
+dbs_A_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\first_day_DSA'
+dbs_B_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\first_day_DSB'
+
+clustering_results_path = '/home/jolwave/PopularityChallenge/statistics/clustering output/clustering_'+str(K)+'_scaled.pickle'
+clustering_results_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\statistics\clustering output\clustering_'+str(K)+'_scaled.pickle'
+
+shape_classifier_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\rndforest_20_class.pkl'
+#feats_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification'
+
+VERBOSE = True
+K = 50  # 40
+NUM_TRIALS = 1
+n_jobs = 1
+#### END SETTINGS ####
+
+
 
 def get_user_info(db,us_id):
 	con = lite.connect(db)
@@ -56,11 +79,8 @@ def get_image_info(db,img_id):
 	cur.execute('SELECT Size, Title, Description, NumSets, NumGroups, AvgGroupsMemb, AvgGroupPhotos, Tags FROM image_info WHERE FlickrId = \''+img_id+'\'')
 	res = cur.fetchall()
 	res = res[0]
-	
-#	feat = np.zeros(len(res)+1)
+
 	feat = []    # np.zeros(len(res))
-	#print res[0]
-	#sys.exit(0)
 
 	feat.append(res[0])						 # Image size
 	feat.append(len(res[1]))						 # Title length
@@ -72,7 +92,6 @@ def get_image_info(db,img_id):
 	feat.append(len(res[7]))						 #number of tags
  
  	return feat, np.array(res)
-
 
 def load_features(ids_list, path_A, path_B,reducedUserInfo=False, reducedPhotoInfo=False):
 
@@ -99,38 +118,25 @@ def load_features(ids_list, path_A, path_B,reducedUserInfo=False, reducedPhotoIn
 	for flickr_id in ids_list:
 		try:
 			im_idx = DS_A.index(flickr_id)		
-	#		if VERBOSE:
-	#			print "FlickrId\t:\t"+flickr_id+"\tin dataset A."
 			HD = HD_A
 			db_path = path_A
 		except ValueError:
 			im_idx = DS_B.index(flickr_id)		
-	#		if VERBOSE:
-	#			print "FlickrId\t:\t"+flickr_id+"\tin dataset B."
 			HD = HD_B
 			db_path = path_B
 
 		user_id = HD[im_idx][1]
-	#	if VERBOSE:
-	#		print "Getting user info..."
 		if reducedUserInfo:
   		    user_feat = get_user_info_reduced(db_path+'/user_info.db',user_id)
   		else:
   		    user_feat = get_user_info(db_path+'/user_info.db',user_id)
-	#	if VERBOSE:
-	#		print "Getting image info..."
 	        if reducedPhotoInfo:
       		    image_feat, image_info = get_image_info_reduced(db_path+'/image_info.db',flickr_id)
 		else:
 		    image_feat, image_info = get_image_info(db_path+'/image_info.db',flickr_id)
 			
 		data.append(list(user_feat) + list(image_feat))
-	#	data.append(list(user_feat))
-
 	return data
-
-
-
 
 def load_deep_features(ids_list, path_A, path_B, db, feat):
 
@@ -157,13 +163,6 @@ def load_popularity_seq(flickr_ids,day=30):
 		for flickr_id in flickr_ids:
 			idx = id_seq.index(flickr_id)
 			seq = sequences[idx][2]
-			"""
-			print "id\t"+flickr_id
-			print "idx\t"+str(idx)
-			print seq
-			print "\n"
-			sys.exit(0)
-			"""
 			data.append(seq)
 	return data
 
@@ -176,7 +175,7 @@ def pop_score(c,days):
 def performance(A,B):
     A = np.array(A, dtype=float)
     B = np.array(B, dtype=float)
-    
+   
     #squared error
     SE = (A-B) ** 2
     #absolute error
@@ -191,23 +190,6 @@ def performance(A,B):
 #---------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------#
 
-#### SETTINGS ####
-dbs_A_path = '/home/jolwave/PopularityChallenge/first_day_DSA'
-dbs_B_path = '/home/jolwave/PopularityChallenge/first_day_DSB'
-dbs_A_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\first_day_DSA'
-dbs_B_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\first_day_DSB'
-
-clustering_results_path = '/home/jolwave/PopularityChallenge/statistics/clustering output/clustering_'+str(K)+'_scaled.pickle'
-clustering_results_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\statistics\clustering output\clustering_'+str(K)+'_scaled.pickle'
-
-shape_classifier_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\rndforest_20_class.pkl'
-#feats_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification'
-
-VERBOSE = True
-K = 50  # 40
-NUM_TRIALS = 1
-n_jobs = 1
-#### END SETTINGS ####
     
 with open(clustering_results_path,'r') as f:
 	clusters = pickle.load(f)
