@@ -8,7 +8,7 @@
 #usage:			
 #notes:
 #==============================================================================
-
+import matplotlib.pyplot as plt
 #from __future__ import print_function
 import sys
 from sys import argv
@@ -17,7 +17,7 @@ import json
 #from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import KFold
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from scipy.stats import norm
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn import preprocessing
@@ -34,29 +34,48 @@ from scipy import stats
 import csv
 from ConfigParser import SafeConfigParser
 
+from scipy import stats
+
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+from keras.utils import to_categorical
+from keras.utils import plot_model
+from keras.models import Model
+from keras.layers import Input
+from keras.layers import Dense
+from keras.layers import LSTM
+from keras.layers import Embedding
+from keras.layers import Dropout
+from keras.layers.merge import add
+from keras.callbacks import ModelCheckpoint
+from keras.models import load_model
+from keras.layers.merge import concatenate
+
 parser = SafeConfigParser()
 
 config_path = os.path.dirname(os.path.realpath(sys.argv[0]))
 config_path = config_path + '/configuration.ini'
 parser.readfp(open(config_path))
 # Read configuration parameters
-machine = parser.get(machine,'machine_name')
+machine = parser.get('general','machine_name')
 dbs_A_path = parser.get(machine,'dbs_A_path')
 dbs_B_path = parser.get(machine,'dbs_B_path')
 clustering_results_path = parser.get(machine,'clustering_results_path')
 shape_classifier_path = parser.get(machine,'shape_classifier_path')
+seq_path = parser.get(machine,'seq_path')
 #### SETTINGS ####
+"""
 dbs_A_path = '/home/jolwave/PopularityChallenge/first_day_DSA'
 dbs_B_path = '/home/jolwave/PopularityChallenge/first_day_DSB'
 dbs_A_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\first_day_DSA'
 dbs_B_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\first_day_DSB'
-
+K = 50
 clustering_results_path = '/home/jolwave/PopularityChallenge/statistics/clustering output/clustering_'+str(K)+'_scaled.pickle'
 clustering_results_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\statistics\clustering output\clustering_'+str(K)+'_scaled.pickle'
 
 shape_classifier_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\rndforest_20_class.pkl'
 #feats_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification'
-
+"""
 VERBOSE = True
 K = 50  # 40
 NUM_TRIALS = 1
@@ -154,10 +173,10 @@ def load_deep_features(ids_list, path_A, path_B, db, feat):
 	con.close()
 	return data
 
-def load_popularity_seq(flickr_ids,day=30):
+def load_popularity_seq(flickr_ids,path,day=30):
 
 	data = []
-	with open('ds_'+str(day)+'_days.pickle','r') as f:
+	with open(path+'ds_'+str(day)+'_days.pickle','r') as f:
 		sequences = pickle.load(f)
 		id_seq = [x[0] for x in sequences]
 		for flickr_id in flickr_ids:
@@ -184,6 +203,95 @@ def performance(A,B):
     return SE, ABS
 
 
+def root_mean_squared_error(y_true, y_pred):
+	return K.sqrt(K.square((y_pred - y_true), axis=1))
+
+def define_model():
+	# feature model
+	inputs1 = Input(shape=(46,))
+
+	# model 01
+#	fe1 = Dropout(0.5)(inputs1)
+#	fe2 = Dense(100, activation='relu')(fe1) #256
+	# model 02
+	fe1 = Dense(100, activation='relu')(inputs1) #256
+	fe2 = Dropout(0.5)(fe1)
+
+#	fe2 = Dense(256, activation='relu')(fe1)
+	# sequence model
+	inputs2 = Input(shape=(1,1))		# shape = (timesteps, featdim)
+	#se1 = Dense(256, activation='relu')(inputs2)
+	#se1 = Embedding(1, 256, mask_zero=True)(inputs2)
+	#se2 = Dropout(0.5)(se1)
+	#se3 = LSTM(256)(se2)
+	se3 = LSTM(100)(inputs2)   # 256
+	# decoder model
+#	decoder1 = add([fe2, se3])
+	# MOD 5	
+	decoder1 = concatenate([fe2, se3])
+	#decoder2 = Dense(256, activation='relu')(decoder1)
+	outputs = Dense(1)(decoder1)
+	# tie it together [image+shape, seq] [seq]
+	model = Model(inputs=[inputs1, inputs2], outputs=outputs)
+	model.compile(loss='mean_squared_error', optimizer='adam')
+#	model.compile(loss=root_mean_squared_error, optimizer='rmsprop')
+	# summarize model
+	print(model.summary())
+	#plot_model(model, to_file='model.png', show_shapes=True)
+	return model
+
+
+
+def get_batch(im_idx,x, label):
+	IN1 = []
+	IN2 = []
+	OUT = []
+	seq = sequences[im_idx]
+	seq = np.insert(seq,0,0)
+	for s_i, s in enumerate(seq[:-1]):
+		feat = np.concatenate((x, centroids[label]))
+
+		IN1.append(feat)
+		IN2.append(s)
+		OUT.append(seq[s_i+1])
+	IN2 = np.array(IN2)
+	IN2 = IN2.reshape(IN2.shape[0],1,1)	# reshape LSTM input to (samples,time steps,features)
+	return np.array(IN1), np.array(IN2), np.array(OUT)
+
+#  f: [x,shape]	   seq starts from 0
+def get_batch2(feat,seq):
+	IN1 = []
+	IN2 = []
+	OUT = []
+	if len(seq) !=30:
+		print "maggiore di 30"
+		print seq
+		sys.exit(0)
+	
+	for s_i, s in enumerate(seq):
+		IN1.append(feat)
+		if s_i == 0:
+			IN2.append(START_VAL)
+		else:
+			IN2.append(seq[s_i-1])
+		OUT.append(s)
+	IN2 = np.array(IN2)
+	IN2 = IN2.reshape(IN2.shape[0],1,1)	# reshape LSTM input to (samples,time steps,features)
+
+	return np.array(IN1), np.array(IN2), np.array(OUT)
+
+
+def difference(series):
+	diff = []
+	for i in range(1,len(series)):
+		diff.append(series[i]-series[i-1])
+	return diff
+
+def inverse_difference(diff):
+	series = [0.0]
+	for i in range(len(diff)):
+		series.append(series[i-1] + diff[i])
+	return series
 #---------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------#
@@ -194,19 +302,38 @@ def performance(A,B):
 with open(clustering_results_path,'r') as f:
 	clusters = pickle.load(f)
 flickr_ids = clusters['images']
+#flickr_ids = flickr_ids[:1000]
 labels = clusters['kmeans_out'].labels_
 centroids  = clusters['kmeans_out'].cluster_centers_
 last_day = 30
 centroids = [c[:last_day+1] for c in centroids]
-sequences = load_popularity_seq(flickr_ids, day=last_day)
+sequences = load_popularity_seq(flickr_ids,seq_path, day=last_day)
 #outliers = [idx for idx, s in enumerate(sequences) if s[-1] <5]
 with open(shape_classifier_path,'r') as f:  
     classifier = pickle.load(f)
     
 # Social features
 X = load_features(flickr_ids,dbs_A_path,dbs_B_path)
-Y = [pop_score(x[-1],last_day) for x in sequences]            # Khosla's pop score at day 30
+#Y = [pop_score(x[-1],last_day) for x in sequences]            # Khosla's pop score at day 30
+Y = sequences
 
+
+n_epochs = 3000
+#filepath = 'model-ep{epoch:03d}-loss{loss:-3f}-val_loss{val_loss:.3f}.h5'
+#checkpoint = ModelCheckpoint(filepath, monitor='val_loss', verbose = 1, save_best_only=True, mode='min')
+LSTM_model = define_model()
+# 01:	not scaled, not stationaryzed, reset = True , Y = sequences, optim = MSE, data= [:100], ep= 1000, neurons = 100, drop = 0.5
+# 02:	not scaled, not stationaryzed, reset = True , Y = sequences, optim = MSE, data= [:100], ep= 1000, neurons = 100, drop = 0.5 after dense
+# 03:	scaled, stationaryzed, reset = True , Y = sequences, optim = MSE, data= [:100], ep= 1000, neurons = 100, drop = 0.5 after dense
+# 04:	scaled, not stationaryzed, reset = True , Y = sequences, optim = MSE, data= [:100], ep= 1000, neurons = 100, drop = 0.5 after dense
+# 05:	scaled, not stationaryzed, reset = True , Y = sequences, optim = MSE, data= [:100], ep= 1000, neurons = 100, drop = 0.5 after dense
+MOD = '05'
+STATIONARITY_NORM = False
+SCALED = True
+if SCALED:
+	START_VAL = -1.0
+else:
+	START_VAL = 0.0
 
 for i in range(NUM_TRIALS):
 
@@ -218,10 +345,17 @@ for i in range(NUM_TRIALS):
     # Fit the scaler with the train features
     scaler = preprocessing.StandardScaler().fit(X_train_o)
     X_train = scaler.transform(X_train_o)
-    # Transform the test features according to the learned scaler
+    #  Transform the test features according to the learned scaler
     X_test = scaler.transform(X_test_o)	
+    
+    # Predicted shape prototypes (test data)
+    test_shape_ls = classifier.predict(X_test)
  
- 
+    #free the memory
+    X_test = None
+    X_train = None
+    scaler = None
+
     # Find the train/test data indices 
     test_idx_order = []
     idx_list = range(len(X))
@@ -229,6 +363,8 @@ for i in range(NUM_TRIALS):
         FOUND = False
         for x_i in idx_list:
             x = X[x_i]
+	    x = np.array(x)
+	    el = np.array(el)
             if all(x == el):                    # check whether the vector is the same
                 if y_test[el_i] != Y[x_i]:      # check whether the label is the same
                     continue
@@ -250,6 +386,8 @@ for i in range(NUM_TRIALS):
         FOUND = False
         for x_i in idx_list:
             x = X[x_i]
+	    x = np.array(x)
+	    el = np.array(el)
             if all(x == el):
                 if y_train[el_i] != Y[x_i]:
                     continue
@@ -265,17 +403,245 @@ for i in range(NUM_TRIALS):
     print "Train indices created"
     
  
- 
-    # Predicted shape prototypes (test data)
-    test_shape_ls = classifier.predict(X_test)
-    train_shape_ls = []
-    # Clustered shape prototypes (train data)
-    for t_idx in range(len(X_train)):   
-        idx = train_idx_order[t_idx]
-        img_id = flickr_ids[idx]
-        l = labels[idx]                     # centroids[l]  ---> shape prototype
-        train_shape_ls.append(l)
-        
+#    train_shapes = []
+    train_features = []
+    train_sequences = []
+    for t_idx, x in enumerate(X_train_o):
+	idx = train_idx_order[t_idx]
+	l = labels[idx]
+	shape = centroids[l]
+	#train_shapes.append(shape)
+	
+	# INPUT 1
+	shape = np.array(shape)
+	x = np.array(x)
+	feat = np.concatenate((x, shape))
+	train_features.append(feat)
+	
+	
+	# INPUT 2 AND Y
+	seq = sequences[idx]
+	seq = np.insert(seq,0,0)
+	# remove stationarity 	
+	if STATIONARITY_NORM:
+		diff_seq = difference(seq)			# se eseguo 'difference' la sequenza avra' un valore in meno (lo scaler imparera' da queste sequenze)
+		train_sequences.append(diff_seq)
+	else:
+		train_sequences.append(seq)
+		
 
+    # FIT FEATURE SCALER  
+    scaler = preprocessing.StandardScaler().fit(train_features)
+    X_train = scaler.transform(train_features)
+ 
+    # FIT SEQUENCE SCALER 
+    if SCALED:
+	    seq_scaler = MinMaxScaler(feature_range= (-1,1))
+	    seq_scaler = seq_scaler.fit(train_sequences)
+	    SEQ_train =  seq_scaler.transform(train_sequences)
+    else:
+	    SEQ_train = train_sequences
+
+ 
+    test_features = []
+    test_sequences = []
+    for t_idx, x in enumerate(X_test_o):
+	idx = test_idx_order[t_idx]
+	l = test_shape_ls[t_idx] # same order than X_test_o
+	shape = centroids[l]
+	#train_shapes.append(shape)
+	
+	# INPUT 1
+	shape = np.array(shape)
+	x = np.array(x)
+	feat = np.concatenate((x, shape))
+	test_features.append(feat)
+	
+	# INPUT 2 AND Y
+	seq = sequences[idx]
+	seq = np.insert(seq,0,0)
+	# remove stationarity 	
+	if STATIONARITY_NORM:
+		diff_seq = difference(seq)
+		test_sequences.append(diff_seq)
+	else:
+		test_sequences.append(seq)
+
+    # Transform the test features according to the learned scaler
+    X_test = scaler.transform(test_features)
+    # Transform test sequences
+    if SCALED:
+	    SEQ_test =  seq_scaler.transform(test_sequences)	
+    else:
+	    SEQ_test = test_sequences
 
     # prepare train/test data for LSTM
+    # TRAIN:     [X, shape_prototype, seq_val]
+    # TEST:      [X, predicted_shape, predicted_seq_val]
+
+   # train_shape_ls = []
+
+    # iterate EPOCHS   ----   OR
+    loss_history = []
+    train_size =len(X_train)
+    for ep in range(n_epochs):
+
+	    #TRAINING
+	    # Clustered shape prototypes (train data)
+	    for t_idx, x in enumerate(X_train):   
+		idx = train_idx_order[t_idx]
+		img_id = flickr_ids[idx]
+#		l = labels[idx]                     # centroids[l]  ---> shape prototype
+		#train_shape_ls.append(l)
+
+#		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(idx,x,l)    # [X,p_t] [p_t+1]
+
+
+		seq = SEQ_train[t_idx]
+		if STATIONARITY_NORM:
+			LSTM_X1, LSTM_X2, LSTM_Y =  get_batch2(x,seq)    
+		else:
+			LSTM_X1, LSTM_X2, LSTM_Y =  get_batch2(x,seq[1:])    # si aspetta features gia concatenate e normalizzate (senza il primo valore)
+	
+
+	   	# fit batch
+		batch_size = len(LSTM_X1)
+		print "\nEpoch:\t" + str(ep) + "\t\tdata #\t" + str(t_idx) + "/" +str(train_size)
+		hist = LSTM_model.fit([LSTM_X1,LSTM_X2],LSTM_Y, epochs=1,batch_size=batch_size,shuffle=False) #,callbacks=[checkpoint])
+		
+		# reset_states
+		LSTM_model.reset_states()
+
+
+		# DEBUG OUT
+		if ep > 5 and ep % 50 == 0 and t_idx % 10 == 0:
+			s = sequences[idx]
+			s = np.array(s)
+			print "\n"
+			pred = START_VAL
+			#print str(pred) + "\t" + "("+str(START_VAL)+")"
+#			pred_s = [START_VAL]
+			pred_s = []
+			for d in range(30):
+				pp = LSTM_model.predict([LSTM_X1[0].reshape(1,46),np.array([pred]).reshape(1,1,1)])
+				pp = pp[0,0]
+				pred_s.append(pp)
+	#			print str(pp) + "\t" + "("+str(s[d])+")"
+				pred = pp
+			
+			s = np.insert(s,0,0)
+			#print len(pred_s)
+			# reverse scaling
+#			predicted = seq_scaler.inverse_transform(np.array(pred_s).reshape(1,len(pred_s)))
+			
+			if SCALED:
+	
+				if not STATIONARITY_NORM:
+					pred_s = np.insert(np.array(pred_s),0,START_VAL)
+
+				predicted = seq_scaler.inverse_transform([pred_s])
+				predicted = predicted[0]
+			else:
+				predicted = pred_s
+			
+			
+			if STATIONARITY_NORM:
+				predicted = inverse_difference(predicted)		# questa funzione ripristina il primo valore
+#			else:
+#				predicted = np.insert(np.array(predicted),0,0)
+			
+			#print len(predicted)
+			#print predicted
+			
+	
+			SE, _ = performance(predicted,s)
+			e = np.sqrt(np.mean(SE))
+			print "RMSE:\t" + str(e)
+			if False and e < 2:
+				plt.figure()
+				plt.title('FlickrId: ' + img_id)
+				plt.plot(s,label='views sequence', linewidth=3.0)
+				plt.plot(predicted,label='predicted')
+				plt.legend(loc='best')
+				#plt.draw()
+				plt.savefig('prediction_'+MOD+'_ep'+str(ep)+'_'+img_id+'.png')
+#				plt.show()
+
+	    # for each epoch --> loss
+	    loss_history.append(hist.history['loss'])
+    print "\nSaving the model..."
+    LSTM_model.save('LSTM_model_'+MOD+'.h5')
+
+     # TESTING    
+    
+    # walk-forward valudation on the test data
+    errors = []
+    
+    for t_idx, x in enumerate(X_test):   
+	idx = test_idx_order[t_idx]
+	img_id = flickr_ids[idx]
+	#l = test_shape_ls[t_idx]                     # centroids[l]  ---> shape prototype
+	#test_shape_ls.append(l)
+
+	#x = np.array(x)
+	#X1 = np.concatenate((x, centroids[l]))
+	X1 = x
+
+	seq_n = SEQ_test[t_idx]
+	
+	s = sequences[idx]
+	s = np.array(s)
+	print "\n"
+	pred = START_VAL   # 0
+	#print str(pred) + "\t" + "("+str(START_VAL)+")"
+	#if STATIONARITY_NORM:
+	pred_s = []
+	for d in range(30):
+		pp = LSTM_model.predict([X1.reshape(1,46),np.array([pred]).reshape(1,1,1)])
+		pp = pp[0,0]
+		pred_s.append(pp)
+		#print str(pp) + "\t" + "("+str(s[d])+")"
+		pred = pp
+	
+	s = np.insert(s,0,0)
+
+	if SCALED:
+
+		if not STATIONARITY_NORM:
+			pred_s = np.insert(np.array(pred_s),0,START_VAL)
+
+		predicted = seq_scaler.inverse_transform([pred_s])
+		predicted = predicted[0]
+	else:
+		predicted = pred_s
+	
+	
+	if STATIONARITY_NORM:
+		predicted = inverse_difference(predicted)		# questa funzione ripristina il primo valore pari a zero
+	SE, _ = performance(predicted,s)
+	e = np.sqrt(np.mean(SE))
+	errors.append(e)
+	print "RMSE:\t" + str(e)
+	if False and e < 2:
+		plt.figure()
+		plt.title('FlickrId: ' + img_id)
+		plt.plot(s,label='views sequence', linewidth=3.0)
+		plt.plot(predicted,label='predicted')
+		plt.legend(loc='best')
+		plt.draw()
+		plt.savefig('TEST_prediction_'+MOD+'_ep'+str(ep)+'_'+img_id+'.png')
+#		plt.show()
+
+
+print "\n\nRMSE:\t" + str(np.mean(errors))
+print "tRMSE 0.25:\t" + str(stats.trim_mean(errors,0.25))
+print "RMSE MED:\t" + str(np.median(errors))
+
+
+plt.figure()
+plt.plot(loss_history)
+plt.title('Training loss')
+plt.draw()
+plt.show()
+
+
