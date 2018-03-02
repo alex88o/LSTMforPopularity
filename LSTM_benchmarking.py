@@ -312,7 +312,7 @@ def define_model(mod, seq_neurons= 128, nseq_neurons = 128):
 #	fe2 = Dense(256, activation='relu')(fe1)
 
 	# MERGE VS. INJECT MODEL
-	if model_code == 'M':
+	if model_type == 'M':
 		print "Defining merge model"
 		# SEQUENTIAL MODEL
 		seq_in_size = len(model_seq_in)		# 1 || 2
@@ -349,7 +349,7 @@ def define_model(mod, seq_neurons= 128, nseq_neurons = 128):
 	return model, summary
 
 
-def get_batch(im_idx,x, label):
+def old_get_batch(im_idx,x, label):
 	IN1 = []
 	IN2 = []
 	OUT = []
@@ -413,6 +413,61 @@ def get_batch2(feat,seq, model = 'model1'):
 	return np.array(IN1), np.array(IN2), np.array(OUT)
 
 
+# mod: model code
+# nseq_in: not-sequential input
+# seq_in: sequential input (beside the groud truth sequence)
+# out_seq: ground truth sequence
+def get_batch(mod,nseq_in,seq_in,out_seq):
+		#feat           # seq
+
+	#[M|I]_NO_<SEQ_IN>_<NSEQ_IN>
+	model_code = mod.split('_')
+	model_type = model_code[0]
+	model_no = model_code[1]
+	model_seq_in = model_code[2]
+	model_nseq_in = model_code[3]
+
+
+	IN1 = []
+	IN2 = []
+	OUT = []
+	if len(seq) !=30:
+		print "maggiore di 30"
+		print seq
+		sys.exit(0)
+	
+	time_featdim = len(model_seq_in)    # 1 oppure 2
+	feat = np.array(nseq_in)
+	seq_in = np.array(seq_in)
+	"""
+	print seq_in
+	print out_seq
+	print len(seq_in)  # 31 , 30 se differenziata (oppure 0)
+	print len(out_seq)    # 30
+	"""
+	for s_i, s in enumerate(out_seq):
+		IN1.append(feat)
+		if len(seq_in)>0:
+			seq_feat =  seq_in[s_i]			#  ex s_i+1
+			if s_i == 0:
+				IN2.append([START_VAL]+[seq_feat])			
+	#			print ([START_VAL],[np.min(shape)])
+
+			else:
+				IN2.append([seq[s_i-1]]+[seq_feat])
+		else:
+			if s_i == 0:
+				IN2.append([START_VAL])			
+			else:
+				IN2.append([seq[s_i-1]])
+	#	print IN2[s_i]
+		OUT.append(s)
+#	print IN2
+	#sys.exit(0)
+	IN2 = np.array(IN2)
+	IN2 = IN2.reshape(IN2.shape[0],1,time_featdim)	# reshape LSTM input to (samples,time steps,features)
+
+	return np.array(IN1), np.array(IN2), np.array(OUT)
 
 
 def difference(series):
@@ -451,36 +506,36 @@ seq_path = parser.get(machine,'seq_path')
 #		
 #		Example:   M_01_vs_x
 #
-MOD = 'M_01_v_x'
-
+MOD = 'M_01_vs_x'
+print MOD
 VERBOSE = True
 K = 50  # 40
 NUM_TRIALS = 1
-n_epochs = 1500
+n_epochs = 1000
 # Input 01:	seq_in: views(v), nseq_in: social(x)
-PREPROCESSING = { 'views':
+PREPROCESSING = { 'v':
 			{
-				STATIONARITY_NORM = True,
-				SCALED = True,
-				START_VAL = -1.0
+				'STATIONARITY_NORM' : True,
+				'SCALED' : True,
+				'START_VAL' : -1.0
 			},
-		  'shape':
+		  's':
 			{
-				STATIONARITY_NORM = True,
-				SCALED = True,
-				START_VAL = -1.0
+				'STATIONARITY_NORM' : True,
+				'SCALED' : True,
+				'START_VAL' : -1.0
 			},
-		  'social':
+		  'x':
 			{
-				STATIONARITY_NORM = True,
-				SCALED = True
+				'STATIONARITY_NORM' : True,
+				'SCALED' : True
 			},
-		  'deep':
+		  'd':
 			{
-				STATIONARITY_NORM = True,
-				SCALED = True
+				'STATIONARITY_NORM' : True,
+				'SCALED' : True
 			}
-		}
+}
 			
 
 
@@ -490,7 +545,7 @@ OUT_DIR = MOD+'_results'
 if not os.path.exists(OUT_DIR):
     os.makedirs(OUT_DIR)
 
-
+START_VAL = -1.0
 #### END SETTINGS ####
 """
 model_type = 'model2'
@@ -608,160 +663,198 @@ X_train = None
 scaler = None
 
 #	SUMMARY:
-#	- train/test social features (scaled):	X_train, X_test
-#	- train/test shape labels:		train_shape_ls, test_shape_ls
-#	- train/test ground truth sequences:	y_train, y_test
+#	- train/test flickr ids:			train_flickr_ids, test_flickr_ids
+#	- train/test social features (not scaled):	X_train_o, X_test_o
+#	- train/test shape labels:			train_shape_ls, test_shape_ls
+#	- train/test ground truth sequences:		y_train, y_test
 #
 #  DATA PREPROCESSING
 #
-#	- SEQUENTIAL INPUT
 
+#		get_batch() si aspetta l'input fisso e quello sequenziale
+
+
+#	TRAIN DATA
+train_features = []
+train_in_seq = []
+train_sequences = []
+for t_idx, x in enumerate(X_train_o):
+
+#	- SEQUENTIAL INPUTS
+	seq_inputs = MOD.split('_')[2]
+
+	seq_in = np.array([])
+	for feat_name in seq_inputs:
+		if feat_name == 'v':		# views: aggiunte di default da get_batch
+			continue
+		if feat_name == 's':
+			l = train_shape_ls[t_idx]
+			ss = centroids[l]
+			ss = np.array(ss)		# shape
+			#print ss
+
+		# remove stationarity 	
+		if PREPROCESSING[feat_name]['STATIONARITY_NORM']:
+			ss = difference(ss)		
+		# TO CHECK: attenzionare la concatenazione dell'input SEQUENZIALE (zip?)..	
+		seq_in = np.concatenate((seq_in,ss))
+
+	train_in_seq.append(seq_in)
 
 #	- NOT-SEQUENTIAL INPUT
+	nseq_inputs = MOD.split('_')[3]
+
+	feat = np.array([])
+	for feat_name in nseq_inputs:
+		# social feat
+		if feat_name == 'x':
+			ff = np.array(x)			
+		# deep (TODO)
+		#if feat_name == 'd':
+			#ff = ...
+		feat = np.concatenate((feat,ff))
+	 
+#	feat = np.concatenate((x, shape))
+	train_features.append(feat)
 
 
+	# LSTM OUTPUT SEQUENCE (inserita anche come input sequenziale)
+	seq = y_train[t_idx]
+	seq = np.insert(seq,0,0)	# se non inserisco lo zero il primo valore è negativo... valutare...
+	# remove stationarity 	
+	if PREPROCESSING['v']['STATIONARITY_NORM']:
+		diff_seq = difference(seq)			# se eseguo 'difference' la sequenza avra' un valore in meno (lo scaler imparera' da queste sequenze)
+		train_sequences.append(diff_seq)
+	else:
+		train_sequences.append(seq)
+
+#	print train_features[0]
+#	print train_in_seq[0]
+#	print train_sequences[0]
+
+
+# FIT FEATURE SCALER  
+scaler = preprocessing.StandardScaler().fit(train_features)	# mean variance scaler
+X_train = scaler.transform(train_features)
+
+
+# FIT IN SEQUENCE SCALER 
+if len(train_in_seq[0])>0:
+	in_seq_scaler = MinMaxScaler(feature_range= (-1,1))
+	in_seq_scaler = in_seq_scaler.fit(train_in_seq)
+	IN_SEQ_train =  in_seq_scaler.transform(train_in_seq)
+
+# FIT OUT SEQUENCE SCALER 
+seq_scaler = MinMaxScaler(feature_range= (-1,1))
+seq_scaler = seq_scaler.fit(train_sequences)
+OUT_SEQ_train =  seq_scaler.transform(train_sequences)
+
+
+# TEST DATA
+test_features = []
+test_in_seq = []
+test_sequences = []
+for t_idx, x in enumerate(X_test_o):
+
+#	- SEQUENTIAL INPUTS
+	seq_inputs = MOD.split('_')[2]
+
+	seq_in = np.array([])
+	for feat_name in seq_inputs:
+		if feat_name == 'v':		# views: aggiunte di default da get_batch
+			continue
+		if feat_name == 's':
+			l = test_shape_ls[t_idx]
+			ss = centroids[l]
+			ss = np.array(ss)		# shape
+			#print ss
+
+		# remove stationarity 	
+		if PREPROCESSING[feat_name]['STATIONARITY_NORM']:
+			ss = difference(ss)			
+		seq_in = np.concatenate((seq_in,ss))
+
+	test_in_seq.append(seq_in)
+
+#	- NOT-SEQUENTIAL INPUT
+	nseq_inputs = MOD.split('_')[3]
+
+	feat = np.array([])
+	for feat_name in nseq_inputs:
+		# social feat
+		if feat_name == 'x':
+			ff = np.array(x)			
+		# deep (TODO)
+		#if feat_name == 'd':
+			#ff = ...
+		feat = np.concatenate((feat,ff))
+	 
+	test_features.append(feat)
+
+# Transform the test features according to the learned scaler
+X_test = scaler.transform(test_features)
+# Transform sequential input for the test set
+if len(test_in_seq[0])>0:
+	IN_SEQ_test =  in_seq_scaler.transform(test_in_seq)
 
 
 #
 #  MODEL DEFINITION
 #
 
-LSTM_model, m_summary = define_model(model=MOD, seq_neurons= 128, nseq_neurons = 128)
+LSTM_model, m_summary = define_model(MOD, seq_neurons= 128, nseq_neurons = 128)
 
+#	SUMMARY:
+#	- train/test flickr ids:				train_flickr_ids, test_flickr_ids
+#	- train/test not-sequential features (scaled):		X_train, X_test
+#	- train/test sequential input (preprocessed):		IN_SEQ_train, IN_SEQ_test
+#	- train ground truth sequences (preprocessed):		OUT_SEQ_train
+#
 
-
-##### PREPROCESSING #####            
-#Shuffle the train/test features
-print "New data splitting..."
-X_train_o, X_test_o, y_train, y_test = train_test_split(X, Y, test_size=0.1)
-
-# Fit the scaler with the train features
-scaler = preprocessing.StandardScaler().fit(X_train_o)
-X_train = scaler.transform(X_train_o)
-#  Transform the test features according to the learned scaler
-X_test = scaler.transform(X_test_o)	
-
-# Predicted shape prototypes (test data)
-test_shape_ls = classifier.predict(X_test)
-
-#free the memory
-X_test = None
-X_train = None
-scaler = None
-
-
-train_features = []
-train_sequences = []
-for t_idx, x in enumerate(X_train_o):
-	idx = train_idx_order[t_idx]
-	l = labels[idx]
-	shape = centroids[l]
-	#train_shapes.append(shape)
-
-	# INPUT 1
-	shape = np.array(shape)
-	x = np.array(x)
-	feat = np.concatenate((x, shape))
-	train_features.append(feat)
-
-
-	# INPUT 2 AND Y
-	seq = sequences[idx]
-	seq = np.insert(seq,0,0)
-	# remove stationarity 	
-	if STATIONARITY_NORM:
-		diff_seq = difference(seq)			# se eseguo 'difference' la sequenza avra' un valore in meno (lo scaler imparera' da queste sequenze)
-		train_sequences.append(diff_seq)
-	else:
-		train_sequences.append(seq)
-	
-
-# FIT FEATURE SCALER  
-scaler = preprocessing.StandardScaler().fit(train_features)
-X_train = scaler.transform(train_features)
-
-# FIT SEQUENCE SCALER 
-if SCALED:
-    seq_scaler = MinMaxScaler(feature_range= (-1,1))
-    seq_scaler = seq_scaler.fit(train_sequences)
-    SEQ_train =  seq_scaler.transform(train_sequences)
-else:
-    SEQ_train = train_sequences
-
-
-test_features = []
-test_sequences = []
-for t_idx, x in enumerate(X_test_o):
-	idx = test_idx_order[t_idx]
-	l = test_shape_ls[t_idx] # same order than X_test_o
-	shape = centroids[l]
-	#train_shapes.append(shape)
-
-	# INPUT 1
-	shape = np.array(shape)
-	x = np.array(x)
-	feat = np.concatenate((x, shape))
-	test_features.append(feat)
-
-	# INPUT 2 AND Y
-	seq = sequences[idx]
-	seq = np.insert(seq,0,0)
-	# remove stationarity 	
-	if STATIONARITY_NORM:
-		diff_seq = difference(seq)
-		test_sequences.append(diff_seq)
-	else:
-		test_sequences.append(seq)
-
-# Transform the test features according to the learned scaler
-X_test = scaler.transform(test_features)
-# Transform test sequences
-if SCALED:
-    SEQ_test =  seq_scaler.transform(test_sequences)	
-else:
-    SEQ_test = test_sequences
-
-# prepare train/test data for LSTM
-# TRAIN:     [X, shape_prototype, seq_val]
-# TEST:      [X, predicted_shape, predicted_seq_val]
-
-# train_shape_ls = []
-
-# iterate EPOCHS   ----   OR
-loss_history = []
+train_loss = []
+train_val = []
 train_size =len(X_train)
 for ep in range(n_epochs):
 
     #TRAINING
-    # Clustered shape prototypes (train data)
     for t_idx, x in enumerate(X_train):   
-	idx = train_idx_order[t_idx]
-	img_id = flickr_ids[idx]
-#		l = labels[idx]                     # centroids[l]  ---> shape prototype
-	#train_shape_ls.append(l)
-
-#		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(idx,x,l)    # [X,p_t] [p_t+1]
+	img_id = train_flickr_ids[t_idx]
 
 
-	seq = SEQ_train[t_idx]
-	if STATIONARITY_NORM:
-		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch2(x,seq,model_type)    
+#	LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(idx,x,l)    # [X,p_t] [p_t+1]
+	seq = OUT_SEQ_train[t_idx]
+	"""
+	print "Ground Truth:"
+	print y_train[t_idx]
+	print "Transformed:"
+	print seq
+	predicted = seq_scaler.inverse_transform([seq])
+	predicted = predicted[0]
+	predicted = inverse_difference(predicted)	
+	print "Reversed:"
+	print predicted
+	"""
+	in_seq = []
+	if len(train_in_seq[0])>0:
+		in_seq = IN_SEQ_train[t_idx]
+        #get_batch(mod,nseq_in,seq_in,out_seq):
+	if PREPROCESSING['v']['STATIONARITY_NORM']:
+		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(MOD,x,in_seq,seq)    
 	else:
-		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch2(x,seq[1:],model_type)    # si aspetta features gia concatenate e normalizzate (senza il primo valore, aggiunge lui START value)
-
-
+		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(MOD,x,in_seq,seq[1:])    # si aspetta features gia concatenate e normalizzate (senza il primo valore, aggiunge lui START value)
    	# fit batch
 	batch_size = len(LSTM_X1)
-	print "\nEpoch:\t" + str(ep) + "\t\tdata #\t" + str(t_idx) + "/" +str(train_size)
+	print "\nEpoch:\t" + str(ep) + "/"+str(n_epochs)+"\t\tdata #\t" + str(t_idx) + "/" +str(train_size)
 	hist = LSTM_model.fit([LSTM_X1,LSTM_X2],LSTM_Y, epochs=1,batch_size=batch_size,shuffle=False) #,callbacks=[checkpoint])
-	
+        train_loss.append(np.mean(hist.history['loss']))
+
 	# reset_states
 	LSTM_model.reset_states()
 
 
 	# DEBUG OUT
-	if ep > 5 and ep % 50 == 0 and t_idx % 10 == 0:
-		s = sequences[idx]
+	if ep > 5 and ep % 50 == 0: #and t_idx % 10 == 0:
+		s = sequences[t_idx]
 		s = np.array(s)
 		print "\n"
 			
@@ -770,17 +863,10 @@ for ep in range(n_epochs):
 #			pred_s = [START_VAL]
 		pred_s = []
 		for d in range(30):
-			if model_type == 'model2':
-				"""
-				print LSTM_X2.shape
-				print LSTM_X2[:3]
-				print LSTM_X2[d,0,1]
-				"""
-				in2 = [pred]+[LSTM_X2[d,0,1]]
-				in2 = np.array(in2)
-				pp = LSTM_model.predict([LSTM_X1[0].reshape(1,15),in2.reshape(1,1,2)])
-			else:
-				pp = LSTM_model.predict([LSTM_X1[0].reshape(1,46),np.array([pred]).reshape(1,1,1)])
+			in2 = [pred]+[LSTM_X2[d,0,1]]
+			in2 = np.array(in2)
+			pp = LSTM_model.predict([LSTM_X1[0].reshape(1,15),in2.reshape(1,1,2)])
+#			pp = LSTM_model.predict([LSTM_X1[0].reshape(1,46),np.array([pred]).reshape(1,1,1)])
 			pp = pp[0,0]
 			pred_s.append(pp)
 #			print str(pp) + "\t" + "("+str(s[d])+")"
@@ -793,7 +879,7 @@ for ep in range(n_epochs):
 		
 		if SCALED:
 
-			if not STATIONARITY_NORM:
+			if not PREPROCESSING['v']['STATIONARITY_NORM']:
 				pred_s = np.insert(np.array(pred_s),0,START_VAL)
 
 			predicted = seq_scaler.inverse_transform([pred_s])
@@ -802,7 +888,7 @@ for ep in range(n_epochs):
 			predicted = pred_s
 		
 		
-		if STATIONARITY_NORM:
+		if PREPROCESSING['v']['STATIONARITY_NORM']:
 			predicted = inverse_difference(predicted)		# questa funzione ripristina il primo valore
 #			else:
 #				predicted = np.insert(np.array(predicted),0,0)
@@ -820,12 +906,12 @@ for ep in range(n_epochs):
 			plt.plot(s,label='views sequence', linewidth=3.0)
 			plt.plot(predicted,label='predicted')
 			plt.legend(loc='best')
-#			plt.draw()
-			plt.savefig('prediction_'+MOD+'_ep'+str(ep)+'_'+img_id+'.png')
-#			plt.show()
+			plt.draw()
+			plt.savefig('train_'+MOD+'_ep'+str(ep)+'_'+img_id+'.png')
+			plt.show()
 
     # for each epoch --> loss
-    loss_history.append(hist.history['loss'])
+"""
 print "\nSaving the model..."
 LSTM_model.save('LSTM_model_'+MOD+'.h5')
 
@@ -856,11 +942,9 @@ pred_s = []
 shape = X1[15:]
 for d in range(30):
 	if model_type == 'model2':
-		"""
-		print LSTM_X2.shape
-		print LSTM_X2[:3]
-		print LSTM_X2[d,0,1]
-		"""
+	#	print LSTM_X2.shape
+	#	print LSTM_X2[:3]
+#		print LSTM_X2[d,0,1]
 	
 		in2 = [pred]+[shape[d+1]]
 		in2 = np.array(in2)
@@ -912,4 +996,4 @@ plt.title('Training loss')
 plt.draw()
 plt.show()
 
-
+"""
