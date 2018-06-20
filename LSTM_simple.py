@@ -35,7 +35,7 @@ import csv
 from ConfigParser import SafeConfigParser
 
 from scipy import stats
-
+import keras
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import to_categorical
@@ -44,7 +44,8 @@ from keras.models import Model
 from keras.layers import Input
 from keras.layers import Dense
 from keras.layers import LSTM
-from keras.layers import Embedding
+from keras.layers import Embedding, Maximum, Lambda
+from keras import backend as K_BACKEND
 from keras.layers import Dropout
 from keras.layers.merge import add
 from keras.callbacks import ModelCheckpoint
@@ -189,7 +190,7 @@ def performance(A,B):
 
 
 def root_mean_squared_error(y_true, y_pred):
-	return K.sqrt(K.square((y_pred - y_true), axis=1))
+	return K_BACKEND.sqrt(K_BACKEND.square((y_pred - y_true), axis=1))
 
 
 def load_deep_features(ids_list, path_A, path_B, db, feat):
@@ -209,60 +210,30 @@ def load_deep_features(ids_list, path_A, path_B, db, feat):
 	return data
 
 
-def old_define_model():
+
+def define_merge_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm_size= 128, stateful=False, return_state=False):
 	# feature model
-	inputs1 = Input(shape=(46,))
+	inputs1 = Input(shape=(feat_dim,))
+
 
 	# model 01
 #	fe1 = Dropout(0.5)(inputs1)
 #	fe2 = Dense(100, activation='relu')(fe1) #256
 	# model 02
-	fe1 = Dense(100, activation='relu')(inputs1) #256
-	fe2 = Dropout(0.5)(fe1)
-
-#	fe2 = Dense(256, activation='relu')(fe1)
-	# sequence model
-	inputs2 = Input(shape=(1,1))		# shape = (timesteps, featdim)
-	#se1 = Dense(256, activation='relu')(inputs2)
-	#se1 = Embedding(1, 256, mask_zero=True)(inputs2)
-	#se2 = Dropout(0.5)(se1)
-	#se3 = LSTM(256)(se2)
-	se3 = LSTM(100)(inputs2)   # 256
-	# decoder model
-#	decoder1 = add([fe2, se3])
-	# MOD 5	
-	decoder1 = concatenate([fe2, se3])
-	#decoder2 = Dense(256, activation='relu')(decoder1)
-	outputs = Dense(1)(decoder1)
-	# tie it together [image+shape, seq] [seq]
-	model = Model(inputs=[inputs1, inputs2], outputs=outputs)
-	model.compile(loss='mean_squared_error', optimizer='adam')
-#	model.compile(loss=root_mean_squared_error, optimizer='rmsprop')
-	# summarize model
-	print(model.summary())
-	#plot_model(model, to_file='model.png', show_shapes=True)
-	return model
-
-
-def define_model2():
-	# feature model
-	inputs1 = Input(shape=(15,))
-
-	# model 01
-#	fe1 = Dropout(0.5)(inputs1)
-#	fe2 = Dense(100, activation='relu')(fe1) #256
-	# model 02
-	fe1 = Dense(64, activation='relu')(inputs1) #256
+	fe1 = Dense(ff_size, activation='relu')(inputs1) #256
 #	fe2 = Dropout(0.5)(fe1)
 
 #	fe2 = Dense(256, activation='relu')(fe1)
 	# sequence model
-	inputs2 = Input(shape=(1,2))		# shape = (timesteps, featdim)
+	inputs2 = Input(shape=(1,seq_dim))		# shape = (timesteps, featdim)
 	#se1 = Dense(256, activation='relu')(inputs2)
 	#se1 = Embedding(1, 256, mask_zero=True)(inputs2)
 	#se2 = Dropout(0.5)(se1)
 	#se3 = LSTM(256)(se2)
-	se3 = LSTM(128)(inputs2)   # 256
+	se3 = LSTM(lstm_size, stateful=stateful, return_state=return_state)(inputs2)   # 256
+
+	# IMPLEMENTARE CONSTRAINT SEQ NON DECRESCENTI.. TODO: AGGIUNGERE ALL INPUT SEQ, IL VALORE PRECEDENTE E INSERIRLO COME INPUT DI MAXIMUM
+#	max_out = Maximum()([se3,prec])
 
 	# INJECT MODEL!!
 	#input_state = Input(shape=(15,))
@@ -274,9 +245,9 @@ def define_model2():
 	# MOD 5	
 	decoder1 = concatenate([fe1, se3])
 	#decoder2 = Dense(256, activation='relu')(decoder1)
-	outputs = Dense(1)(decoder1)
+	out = Dense(1)(decoder1)
 	# tie it together [image, shape+seq] [seq]
-	model = Model(inputs=[inputs1, inputs2], outputs=outputs)
+	model = Model(inputs=[inputs1, inputs2], outputs=out)
 	model.compile(loss='mean_squared_error', optimizer='adam')
 #	model.compile(loss=root_mean_squared_error, optimizer='rmsprop')
 	# summarize model
@@ -286,189 +257,97 @@ def define_model2():
 
 
 
-def define_model(mod, seq_neurons= 128, nseq_neurons = 128):
+def define_merge_constrained_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm_size= 128, stateful=False, return_state=False):
 
-	#[M|I]_NO_<SEQ_IN>_<NSEQ_IN>
-	model_code = mod.split('_')
-	model_type = model_code[0]
-	model_no = model_code[1]
-	model_seq_in = model_code[2]
-	model_nseq_in = model_code[3]
+	# feature
+	inputs1 = Input(shape=(feat_dim,))
+	fe1 = Dense(ff_size, activation='relu')(inputs1) #256
 
+	# sequential
+	inputs2 = Input(shape=(1,seq_dim))		# shape = (timesteps, featdim)
+	se3 = LSTM(lstm_size, stateful=stateful, return_state=return_state)(inputs2)   # 256
 
-	# FEED FORWARD MODEL
-	# Not-sequential input (social feats=='x', deep feats=='d')
-	if model_nseq_in == 'x':
-		nseq_in_size = 15
-	else:
-		nseq_in_size = 4096
-	inputs1 = Input(shape=(nseq_in_size,))
+	decoder1 = concatenate([fe1, se3])
+	#decoder2 = Dense(256, activation='relu')(decoder1)
+	out = Dense(1)(decoder1)
 
-#	fe1 = Dropout(0.5)(inputs1)
-#	fe2 = Dense(100, activation='relu')(fe1) #256
-	fe1 = Dense(nseq_neurons, activation='relu')(inputs1) #256
-#	fe2 = Dropout(0.5)(fe1)
+	# QUESTO LAYER IMPONE LA NON DECRESCENZA DELLE SEQUENZE DI OUTPUT
+	# NON FUNZIONA PERCHE' Maximum NON E' UN LAYER VALIDO PER LA GENERAZIONE DI OUTPUT
+#	max_out = Maximum()([out,inputs2[0]])
+#	max_out = keras.layers.maximum([out,inputs2[0]])
 
-#	fe2 = Dense(256, activation='relu')(fe1)
+	max_out = Lambda(lambda x: K_BACKEND.max(x))([out,inputs2[:,:,0]])
 
-	# MERGE VS. INJECT MODEL
-	if model_type == 'M':
-		print "Defining merge model"
-		# SEQUENTIAL MODEL
-		seq_in_size = len(model_seq_in)		# 1 || 2
-		inputs2 = Input(shape=(1,seq_in_size))		# shape = (timesteps, featdim)
-		#se1 = Dense(256, activation='relu')(inputs2)
-		#se2 = Dropout(0.5)(se1)
-		#se3 = LSTM(256)(se2)
-		se3 = LSTM(seq_neurons)(inputs2)   # 256
-
-		# INJECT MODEL!!
-		#input_state = Input(shape=(15,))
-		#state_init = Dense(seq_neurons,activation='tanh')(input_state)
-		#ss = LSTM(128)(inputs2,initial_state = [state_init,state_init])
-
-		# decoder model
-	#	decoder1 = add([fe2, se3])
-		decoder1 = concatenate([fe1, se3])
-		#decoder2 = Dense(256, activation='relu')(decoder1)
-	"""
-	elif model_code == 'IN-I':		# Init-Inject model
-	elif model_code == 'PR-I':		# Pre-Inject model
-	elif model_code == 'PA-I':		# Par-Inject model
-	"""
-
-	outputs = Dense(1)(decoder1)
 	# tie it together [image, shape+seq] [seq]
-	model = Model(inputs=[inputs1, inputs2], outputs=outputs)
+	model = Model(inputs=[inputs1, inputs2], outputs=max_out)
 	model.compile(loss='mean_squared_error', optimizer='adam')
 #	model.compile(loss=root_mean_squared_error, optimizer='rmsprop')
 	# summarize model
-	summary = model.summary()
-	print(summary)
+	print(model.summary())
 	#plot_model(model, to_file='model.png', show_shapes=True)
-	return model, summary
+	return model
 
 
-def old_get_batch(im_idx,x, label):
-	IN1 = []
-	IN2 = []
-	OUT = []
-	seq = sequences[im_idx]
-	seq = np.insert(seq,0,0)
-	for s_i, s in enumerate(seq[:-1]):
-		feat = np.concatenate((x, centroids[label]))
+def transform_data_to_supervised(X_o, shape_ls, centroids, y_o):
+	FEAT_SET = []
+	IN_SEQ_SET = []
+	OUT_SEQ_SET = []
+	for t_idx, x in enumerate(X_o):
+		#x = x[:2]
+	#	- SEQUENTIAL INPUTS
+	#	NB: il valore al giorno zero (0.0) viene eliminato dopo la differenziazione (difference(ss)). 
 
-		IN1.append(feat)
-		IN2.append(s)
-		OUT.append(seq[s_i+1])
-	IN2 = np.array(IN2)
-	IN2 = IN2.reshape(IN2.shape[0],1,1)	# reshape LSTM input to (samples,time steps,features)
-	return np.array(IN1), np.array(IN2), np.array(OUT)
-
-#  f: [x,shape]	   seq starts from 0
-def get_batch2(feat,seq, model = 'model1'):
-	IN1 = []
-	IN2 = []
-	OUT = []
-	if len(seq) !=30:
-		print "maggiore di 30"
-		print seq
-		sys.exit(0)
-	
-	time_featdim = 1
-	if model == 'model2':
-		time_featdim = 2
-		shape = feat[15:]
-		feat = feat[:15]
-#		shape = np.array(shape)
-	feat = np.array(feat)
-	"""
-	print shape
-	print seq
-	print len(shape)  # 31
-	print len(seq)    # 30
-	print [shape[2]]
-	"""
-	for s_i, s in enumerate(seq):
-		IN1.append(feat)
-		if model == 'model2':
-			if s_i == 0:
-#				IN2.append(np.concatenate([START_VAL],[shape[s_i+1]]))
-				IN2.append([START_VAL]+[shape[s_i+1]])
-	#			print ([START_VAL],[np.min(shape)])
-			else:
-				#IN2.append(np.concatenate([seq[s_i-1]],[shape[s_i+1]]))   
-				IN2.append([seq[s_i-1]]+[shape[s_i+1]])
+		# TRANSFORM THE SEQUENCES TO BE STATIONARY
+		# load the shape (sequential data)
+		l = shape_ls[t_idx]
+		ss = centroids[l]
+		ss = np.array(ss)		# shape
+		if NORM_DIFF:
+			shape_diff = difference(ss)
+			# NB: i prototipi (shape) hanno dimensione 31, quindi non inserisco lo zero iniziale 
 		else:
-			if s_i == 0:
-				IN2.append(START_VAL)
-			else:
-				IN2.append(seq[s_i-1])   #    s_i-1   -->  s_i
-		OUT.append(s)
-	#print IN2
-	#sys.exit(0)
-	IN2 = np.array(IN2)
-	IN2 = IN2.reshape(IN2.shape[0],1,time_featdim)	# reshape LSTM input to (samples,time steps,features)
-
-	return np.array(IN1), np.array(IN2), np.array(OUT)
-
-
-# mod: model code
-# nseq_in: not-sequential input
-# seq_in: sequential input (beside the groud truth sequence)
-# out_seq: ground truth sequence
-def get_batch(mod,nseq_in,seq_in,out_seq):
-		#feat           # seq
-
-	#[M|I]_NO_<SEQ_IN>_<NSEQ_IN>
-	model_code = mod.split('_')
-	model_type = model_code[0]
-	model_no = model_code[1]
-	model_seq_in = model_code[2]
-	model_nseq_in = model_code[3]
-
-
-	IN1 = []
-	IN2 = []
-	OUT = []
-	if len(seq) !=30:
-		print "maggiore di 30"
-		print seq
-		sys.exit(0)
+			shape_diff = ss
 	
-	time_featdim = len(model_seq_in)    # 1 oppure 2
-	feat = np.array(nseq_in)
-	seq_in = np.array(seq_in)
-	"""
-	print seq_in
-	print out_seq
-	print len(seq_in)  # 31 , 30 se differenziata (oppure 0)
-	print len(out_seq)    # 30
-	"""
-	for s_i, s in enumerate(out_seq):
-		IN1.append(feat)
-		if len(seq_in)>0:
-			seq_feat =  seq_in[s_i]			#  ex s_i+1
-			if s_i == 0:
-				IN2.append([START_VAL]+[seq_feat])			
-	#			print ([START_VAL],[np.min(shape)])
-
-			else:
-				IN2.append([seq[s_i-1]]+[seq_feat])
+		# load the views dynamic (sequential data)
+		seq = y_o[t_idx]
+		seq = np.insert(seq,0,0)
+		if NORM_DIFF:
+			seq_diff = difference(seq)
+			IN_SEQ_SET.append([0.0,0.0])	# inserisco questa coppia solo se NORM_DIFF == True
 		else:
-			if s_i == 0:
-				IN2.append([START_VAL])			
-			else:
-				IN2.append([seq[s_i-1]])
-	#	print IN2[s_i]
-		OUT.append(s)
-#	print IN2
-	#sys.exit(0)
-	IN2 = np.array(IN2)
-	IN2 = IN2.reshape(IN2.shape[0],1,time_featdim)	# reshape LSTM input to (samples,time steps,features)
+			seq_diff = seq
 
-	return np.array(IN1), np.array(IN2), np.array(OUT)
+#		IN_SEQ_SET.append([0.0,0.0])
+		OUT_SEQ_SET.append([seq_diff[0]]) # seq_diff[0] ==>> primo valore da predire ( 0.0 ==> p1 )
+		for v_i in range(len(seq_diff)-1):
+			seq_in = [seq_diff[v_i], shape_diff[v_i]]
+			IN_SEQ_SET.append(seq_in)		#inputs2
+			OUT_SEQ_SET.append([seq_diff[v_i+1]])
+	
+		#print len(IN_SEQ_SET)
+		#sys.exit(0)
+		# ogni 30 righe di train_in_seq rappresentano i dati di una immagine (una aggiunta prima del for e le altre 29 dentro il for)
+	
+		"""
+		# DEBUG
+		print len(ss)
+		print ss
+		print shape_diff
+	#	print inverse_difference(diff)
+		print '\n'
+	#	seq = np.insert(seq,0,0)
+		print len(seq)
+		print seq
+	#	diff = difference(seq)
+		print seq_diff
+	#	print inverse_difference(diff)
+		sys.exit(0)
+		"""
 
+	#	- NOT-SEQUENTIAL INPUT
+		for i in range(len(seq)-1):
+			FEAT_SET.append(x)
+	return FEAT_SET, IN_SEQ_SET, OUT_SEQ_SET		# 15x30 2x30 1x30 per ogni dato
 
 def difference(series):
 	diff = []
@@ -481,6 +360,8 @@ def inverse_difference(diff):
 	for i in range(len(diff)):
 		series.append(series[i] + diff[i])
 	return series
+
+
 #---------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------#
 #---------------------------------------------------------------------------------------#
@@ -496,69 +377,23 @@ dbs_B_path = parser.get(machine,'dbs_B_path')
 clustering_results_path = parser.get(machine,'clustering_results_path')
 shape_classifier_path = parser.get(machine,'shape_classifier_path')
 seq_path = parser.get(machine,'seq_path')
-#### SETTINGS ####
-#	Model code:	[M|I]_NO_<SEQ_IN>_<NSEQ_IN>
-#
-#		M|I	Merge or Inject model
-#		NO	version number
-#		SEQ_IN	sequential input (v:views, s:shape, x:social, d:deep visual)
-#		NSEQ_IN	not-sequential input (v:views, s:shape, x:social, d:deep visual)
-#		
-#		Example:   M_01_vs_x
-#
-MOD = 'M_01_vs_x'
-print MOD
+
 VERBOSE = True
 K = 50  # 40
 NUM_TRIALS = 1
-n_epochs = 1000
-# Input 01:	seq_in: views(v), nseq_in: social(x)
-PREPROCESSING = { 'v':
-			{
-				'STATIONARITY_NORM' : True,
-				'SCALED' : True,
-				'START_VAL' : -1.0
-			},
-		  's':
-			{
-				'STATIONARITY_NORM' : True,
-				'SCALED' : True,
-				'START_VAL' : -1.0
-			},
-		  'x':
-			{
-				'STATIONARITY_NORM' : True,
-				'SCALED' : True
-			},
-		  'd':
-			{
-				'STATIONARITY_NORM' : True,
-				'SCALED' : True
-			}
-}
-			
-
-
+n_epochs = 2000
+NORM_DIFF = True
+RET_STATES = False
+# Input 01:	seq_in: views+shape(vs), nseq_in: social(x)
 
 #	- OUTPUT SETTINGS
-OUT_DIR = MOD+'_results'
-if not os.path.exists(OUT_DIR):
-    os.makedirs(OUT_DIR)
+#OUT_DIR = MOD+'_results'
+#if not os.path.exists(OUT_DIR):
+#    os.makedirs(OUT_DIR)
 
-START_VAL = -1.0
+START_VAL = -1.0  # minimum of tanh function
 #### END SETTINGS ####
-"""
-model_type = 'model2'
-if SCALED:
-	START_VAL = -1.0
-else:
-	START_VAL = 0.0
 
-if model_type == 'model2':
-	LSTM_model = define_model2()
-else:
-	LSTM_model = define_model()
-"""
 #
 #  DATA LOADING
 #
@@ -599,7 +434,7 @@ labels = clusters['kmeans_out'].labels_
 
 #	- DATA SUBSET
 
-flickr_ids = flickr_ids[:1000]
+flickr_ids = flickr_ids[:3000]
 cluster_idx = [1,3,17,28,30,31,48]   # 9, 20, 32 ... 8, 21
 cluster_idx = []
 """
@@ -617,7 +452,7 @@ if len(cluster_idx)>0:
 
 #	- GROUND TRUTH SEQUENCES
 sequences = load_popularity_seq(flickr_ids,seq_path, day=last_day)
-#outliers = [idx for idx, s in enumerate(sequences) if s[-1] < 3]
+#outliers = [idx for idx, s in enumerate(sequences) if s[-1] < 5]
 #Y = [pop_score(x[-1],last_day) for x in sequences]            # Khosla's pop score at day 30
 Y = sequences
 
@@ -672,66 +507,28 @@ scaler = None
 #  DATA PREPROCESSING
 #
 
-#		get_batch() si aspetta l'input fisso e quello sequenziale
+
+# NB: i prototipi (shape) hanno dimensione 31
+#print len(centroids[0])
+#sys.exit(0)
+
 
 
 #	TRAIN DATA
 train_features = []
 train_in_seq = []
-train_sequences = []
-for t_idx, x in enumerate(X_train_o):
+train_out_seq = []
 
-#	- SEQUENTIAL INPUTS
-	seq_inputs = MOD.split('_')[2]
-
-	seq_in = np.array([])
-	for feat_name in seq_inputs:
-		if feat_name == 'v':		# views: aggiunte di default da get_batch
-			continue
-		if feat_name == 's':
-			l = train_shape_ls[t_idx]
-			ss = centroids[l]
-			ss = np.array(ss)		# shape
-			#print ss
-
-		# remove stationarity 	
-		if PREPROCESSING[feat_name]['STATIONARITY_NORM']:
-			ss = difference(ss)		
-		# TO CHECK: attenzionare la concatenazione dell'input SEQUENZIALE (zip?)..	
-		seq_in = np.concatenate((seq_in,ss))
-
-	train_in_seq.append(seq_in)
-
-#	- NOT-SEQUENTIAL INPUT
-	nseq_inputs = MOD.split('_')[3]
-
-	feat = np.array([])
-	for feat_name in nseq_inputs:
-		# social feat
-		if feat_name == 'x':
-			ff = np.array(x)			
-		# deep (TODO)
-		#if feat_name == 'd':
-			#ff = ...
-		feat = np.concatenate((feat,ff))
-	 
-#	feat = np.concatenate((x, shape))
-	train_features.append(feat)
-
-
-	# LSTM OUTPUT SEQUENCE (inserita anche come input sequenziale)
-	seq = y_train[t_idx]
-	seq = np.insert(seq,0,0)	# se non inserisco lo zero il primo valore è negativo... valutare...
-	# remove stationarity 	
-	if PREPROCESSING['v']['STATIONARITY_NORM']:
-		diff_seq = difference(seq)			# se eseguo 'difference' la sequenza avra' un valore in meno (lo scaler imparera' da queste sequenze)
-		train_sequences.append(diff_seq)
-	else:
-		train_sequences.append(seq)
-
-#	print train_features[0]
-#	print train_in_seq[0]
-#	print train_sequences[0]
+train_features, train_in_seq, train_out_seq = transform_data_to_supervised(X_train_o, train_shape_ls, centroids, y_train)
+"""
+print np.array(train_features)
+print np.array(train_in_seq)
+print np.array(train_out_seq)
+print len(train_features)
+print len(train_in_seq)
+print len(train_out_seq)
+"""
+#sys.exit(0)
 
 
 # FIT FEATURE SCALER  
@@ -739,71 +536,33 @@ scaler = preprocessing.StandardScaler().fit(train_features)	# mean variance scal
 X_train = scaler.transform(train_features)
 
 
-# FIT IN SEQUENCE SCALER 
-if len(train_in_seq[0])>0:
-	in_seq_scaler = MinMaxScaler(feature_range= (-1,1))
-	in_seq_scaler = in_seq_scaler.fit(train_in_seq)
-	IN_SEQ_train =  in_seq_scaler.transform(train_in_seq)
+# FIT INPUT SEQUENCE SCALER 
+in_seq_scaler = MinMaxScaler(feature_range= (-1,1))
+in_seq_scaler = in_seq_scaler.fit(train_in_seq)
+IN_SEQ_train =  in_seq_scaler.transform(train_in_seq)
 
 # FIT OUT SEQUENCE SCALER 
 seq_scaler = MinMaxScaler(feature_range= (-1,1))
-seq_scaler = seq_scaler.fit(train_sequences)
-OUT_SEQ_train =  seq_scaler.transform(train_sequences)
+seq_scaler = seq_scaler.fit(train_out_seq)
+OUT_SEQ_train =  seq_scaler.transform(train_out_seq)
 
+
+test_features, test_in_seq, test_out_seq = transform_data_to_supervised(X_test_o, test_shape_ls, centroids, y_test)
 
 # TEST DATA
-test_features = []
-test_in_seq = []
-test_sequences = []
-for t_idx, x in enumerate(X_test_o):
-
-#	- SEQUENTIAL INPUTS
-	seq_inputs = MOD.split('_')[2]
-
-	seq_in = np.array([])
-	for feat_name in seq_inputs:
-		if feat_name == 'v':		# views: aggiunte di default da get_batch
-			continue
-		if feat_name == 's':
-			l = test_shape_ls[t_idx]
-			ss = centroids[l]
-			ss = np.array(ss)		# shape
-			#print ss
-
-		# remove stationarity 	
-		if PREPROCESSING[feat_name]['STATIONARITY_NORM']:
-			ss = difference(ss)			
-		seq_in = np.concatenate((seq_in,ss))
-
-	test_in_seq.append(seq_in)
-
-#	- NOT-SEQUENTIAL INPUT
-	nseq_inputs = MOD.split('_')[3]
-
-	feat = np.array([])
-	for feat_name in nseq_inputs:
-		# social feat
-		if feat_name == 'x':
-			ff = np.array(x)			
-		# deep (TODO)
-		#if feat_name == 'd':
-			#ff = ...
-		feat = np.concatenate((feat,ff))
-	 
-	test_features.append(feat)
-
 # Transform the test features according to the learned scaler
 X_test = scaler.transform(test_features)
 # Transform sequential input for the test set
-if len(test_in_seq[0])>0:
-	IN_SEQ_test =  in_seq_scaler.transform(test_in_seq)
+IN_SEQ_test =  in_seq_scaler.transform(test_in_seq)
 
 
 #
 #  MODEL DEFINITION
 #
+#LSTM_model, m_summary = define_model(MOD, seq_neurons= 128, nseq_neurons = 128)
+LSTM_model = define_merge_model(feat_dim = len(X_train[0]), ff_size= 128, seq_dim = len(IN_SEQ_train[0]), lstm_size= 256, stateful = False, return_state=RET_STATES)
+#LSTM_model = define_merge_constrained_model(feat_dim = len(X_train[0]), ff_size= 64, seq_dim = len(IN_SEQ_train[0]), lstm_size= 128, stateful = False, return_state=RET_STATES)
 
-LSTM_model, m_summary = define_model(MOD, seq_neurons= 128, nseq_neurons = 128)
 
 #	SUMMARY:
 #	- train/test flickr ids:				train_flickr_ids, test_flickr_ids
@@ -815,100 +574,115 @@ LSTM_model, m_summary = define_model(MOD, seq_neurons= 128, nseq_neurons = 128)
 train_loss = []
 train_val = []
 train_size =len(X_train)
+n_train_images = len(X_train)/last_day
+print n_train_images
 for ep in range(n_epochs):
 
     #TRAINING
-    for t_idx, x in enumerate(X_train):   
+#    for t_idx, x in enumerate(X_train):   
+    for t_idx in range(n_train_images):   
 	img_id = train_flickr_ids[t_idx]
 
+	#LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(MOD,x,in_seq,seq) 
+	LSTM_X1 = X_train[t_idx:t_idx+last_day]
+	LSTM_X2 = IN_SEQ_train[t_idx:t_idx+last_day]
+	LSTM_Y = OUT_SEQ_train[t_idx:t_idx+last_day]
+	"""
+	print LSTM_X1
+	print LSTM_X2
+	print LSTM_Y
+	print len(LSTM_X1)
+	print len(LSTM_X2)
+	print len(LSTM_Y)
+	sys.exit(0)
+	"""
 
-#	LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(idx,x,l)    # [X,p_t] [p_t+1]
-	seq = OUT_SEQ_train[t_idx]
-	"""
-	print "Ground Truth:"
-	print y_train[t_idx]
-	print "Transformed:"
-	print seq
-	predicted = seq_scaler.inverse_transform([seq])
-	predicted = predicted[0]
-	predicted = inverse_difference(predicted)	
-	print "Reversed:"
-	print predicted
-	"""
-	in_seq = []
-	if len(train_in_seq[0])>0:
-		in_seq = IN_SEQ_train[t_idx]
-        #get_batch(mod,nseq_in,seq_in,out_seq):
-	if PREPROCESSING['v']['STATIONARITY_NORM']:
-		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(MOD,x,in_seq,seq)    
-	else:
-		LSTM_X1, LSTM_X2, LSTM_Y =  get_batch(MOD,x,in_seq,seq[1:])    # si aspetta features gia concatenate e normalizzate (senza il primo valore, aggiunge lui START value)
+	LSTM_X2 = LSTM_X2.reshape(LSTM_X2.shape[0],1,2)	# reshape LSTM input to (samples,time steps,features)
+
    	# fit batch
 	batch_size = len(LSTM_X1)
-	print "\nEpoch:\t" + str(ep) + "/"+str(n_epochs)+"\t\tdata #\t" + str(t_idx) + "/" +str(train_size)
+	print "\nEpoch:\t" + str(ep) + "/"+str(n_epochs)+"\t\tdata #\t" + str(t_idx) + "/" +str(n_train_images)
+	# TODO: TENSORBOARD CALLBACK
 	hist = LSTM_model.fit([LSTM_X1,LSTM_X2],LSTM_Y, epochs=1,batch_size=batch_size,shuffle=False) #,callbacks=[checkpoint])
         train_loss.append(np.mean(hist.history['loss']))
+	print "HISTORY LOSS LEN"
+	print len(hist.history['loss'])
+	print "HISTORY LOSS LEN"
 
 	# reset_states
 	LSTM_model.reset_states()
 
 
 	# DEBUG OUT
-	if ep > 5 and ep % 50 == 0: #and t_idx % 10 == 0:
+	if ep == 1999: #ep % 50 == 0: #and t_idx % 10 == 0:
 		s = sequences[t_idx]
 		s = np.array(s)
 		print "\n"
 			
 		pred = START_VAL
+		pred2 = START_VAL
 		#print str(pred) + "\t" + "("+str(START_VAL)+")"
 #			pred_s = [START_VAL]
-		pred_s = []
-		for d in range(30):
-			in2 = [pred]+[LSTM_X2[d,0,1]]
+		pred_s = []	# predicted sequence
+		pred_s2 = []
+		if not NORM_DIFF:
+			pred_s = [START_VAL]
+			pred_s2 = [START_VAL]
+
+		for d in range(last_day):
+			in2 = [pred]+[LSTM_X2[d,0,1]]	# da LSTM_X2 prendo solo la shape, indici: (samples,time steps,features)
 			in2 = np.array(in2)
-			pp = LSTM_model.predict([LSTM_X1[0].reshape(1,15),in2.reshape(1,1,2)])
+			pp = LSTM_model.predict([LSTM_X1[0].reshape(1,len(X_train[0])),in2.reshape(1,1,2)])
+
+			in22 = [pred2]+[LSTM_X2[d,0,1]]	# da LSTM_X2 prendo solo la shape, indici: (samples,time steps,features)
+			in22 = np.array(in22)
+			pp2 = LSTM_model.predict([LSTM_X1[0].reshape(1,len(X_train[0])),in22.reshape(1,1,2)])
+			"""
+			pp, H, S = LSTM_model.predict([LSTM_X1[0].reshape(1,len(X_train[0])),in2.reshape(1,1,2)])
+			print "##### OUTPUTS #####"
+			print pp
+			print H
+			print S
+			"""
+		#	print "PREDICTION"
+		#	print pp
 #			pp = LSTM_model.predict([LSTM_X1[0].reshape(1,46),np.array([pred]).reshape(1,1,1)])
-			pp = pp[0,0]
+			pp = pp[0,0]	# predicted value
 			pred_s.append(pp)
-#			print str(pp) + "\t" + "("+str(s[d])+")"
-			pred = pp
-		
+			pred = pp	# lo uso per la prossima prediction (next timestep)
+			
+			#print str(pp) + "\t" + "("+str(s[d])+")"
+			pp2 = pp2[0,0]	# predicted value
+			pred2 = np.max([pred2,pp2])
+			pred_s2.append(pred2)
+					
 		s = np.insert(s,0,0)
 		#print len(pred_s)
 		# reverse scaling
 #			predicted = seq_scaler.inverse_transform(np.array(pred_s).reshape(1,len(pred_s)))
 		
-		if SCALED:
+		predicted = seq_scaler.inverse_transform([pred_s])
+		predicted = predicted[0]
+	
+		predicted2 = seq_scaler.inverse_transform([pred_s2])
+		predicted2 = predicted2[0]
 
-			if not PREPROCESSING['v']['STATIONARITY_NORM']:
-				pred_s = np.insert(np.array(pred_s),0,START_VAL)
-
-			predicted = seq_scaler.inverse_transform([pred_s])
-			predicted = predicted[0]
-		else:
-			predicted = pred_s
-		
-		
-		if PREPROCESSING['v']['STATIONARITY_NORM']:
+		if NORM_DIFF:
 			predicted = inverse_difference(predicted)		# questa funzione ripristina il primo valore
-#			else:
-#				predicted = np.insert(np.array(predicted),0,0)
-		
-		#print len(predicted)
-		#print predicted
-		
+			predicted2 = inverse_difference(predicted2)		# questa funzione ripristina il primo valore
 
 		SE, _ = performance(predicted,s)
 		e = np.sqrt(np.mean(SE))
 		print "RMSE:\t" + str(e)
-		if True and e < 2:
+		if True and e < 3:
 			plt.figure()
 			plt.title('FlickrId: ' + img_id)
 			plt.plot(s,label='views sequence', linewidth=3.0)
 			plt.plot(predicted,label='predicted')
+			plt.plot(predicted2,label='predicted2')
 			plt.legend(loc='best')
 			plt.draw()
-			plt.savefig('train_'+MOD+'_ep'+str(ep)+'_'+img_id+'.png')
+			plt.savefig('train_ep'+str(ep)+'_'+img_id+'.png')
 			plt.show()
 
     # for each epoch --> loss
