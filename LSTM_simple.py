@@ -27,7 +27,7 @@ import numpy as np
 import os, math
 import pprint
 import pickle, json
-import sqlite3 as lite
+#import sqlite3 as lite
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
 from scipy import stats
@@ -35,6 +35,7 @@ import csv
 from ConfigParser import SafeConfigParser
 
 from scipy import stats
+"""
 import keras
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
@@ -51,7 +52,11 @@ from keras.layers.merge import add
 from keras.callbacks import ModelCheckpoint
 from keras.models import load_model
 from keras.layers.merge import concatenate
+"""
 
+# custom
+from mymodels import define_merge_model, define_merge_constrained_model
+from utils import load_popularity_seq, load_features, transform_data_to_supervised, inverse_difference
 parser = SafeConfigParser()
 
 
@@ -70,296 +75,7 @@ shape_classifier_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\Populari
 
 
 
-def get_user_info(db,us_id):
-	con = lite.connect(db)
-	cur = con.cursor()
-	cur.execute('SELECT Ispro, Contacts, PhotoCount, MeanViews, GroupsCount, GroupsAvgMembers, GroupsAvgPictures FROM user_info WHERE UserId = \''+us_id+'\'')
-	res = cur.fetchall()
-	res = res[0]
-	return np.array(res)
 
-def get_image_info(db,img_id):
-	con = lite.connect(db)
-	cur = con.cursor()
-	cur.execute('SELECT Size, Title, Description, NumSets, NumGroups, AvgGroupsMemb, AvgGroupPhotos, Tags FROM image_info WHERE FlickrId = \''+img_id+'\'')
-	res = cur.fetchall()
-	res = res[0]
-
-	feat = []    # np.zeros(len(res))
-
-	feat.append(res[0])						 # Image size
-	feat.append(len(res[1]))						 # Title length
-	feat.append(len(res[2]))						 # Description length
-	feat.append(res[3])	
-	feat.append(res[4])
-	feat.append(res[5])
-	feat.append(res[6])
-	feat.append(len(res[7]))						 #number of tags
- 
- 	return feat, np.array(res)
-
-def load_features(ids_list, path_A, path_B,reducedUserInfo=False, reducedPhotoInfo=False):
-
-	data = []
-
-	con = lite.connect(path_A+'/headers.db')
-	cur = con.cursor()
-	cur.execute('SELECT FlickrId, UserId FROM headers')
-	HD_A = cur.fetchall()
-	con.close()
-	DS_A = [x[0] for x in HD_A]
-
-	con = lite.connect(path_B+'/headers.db')
-	cur = con.cursor()
-	cur.execute('SELECT FlickrId, UserId FROM headers')
-	HD_B = cur.fetchall()
-	con.close()
-	DS_B = [x[0] for x in HD_B]
-
-	if VERBOSE:
-		print "\nLoading features:"
-
-	HD = []
-	for flickr_id in ids_list:
-		try:
-			im_idx = DS_A.index(flickr_id)		
-			HD = HD_A
-			db_path = path_A
-		except ValueError:
-			im_idx = DS_B.index(flickr_id)		
-			HD = HD_B
-			db_path = path_B
-
-		user_id = HD[im_idx][1]
-		if reducedUserInfo:
-  		    user_feat = get_user_info_reduced(db_path+'/user_info.db',user_id)
-  		else:
-  		    user_feat = get_user_info(db_path+'/user_info.db',user_id)
-	        if reducedPhotoInfo:
-      		    image_feat, image_info = get_image_info_reduced(db_path+'/image_info.db',flickr_id)
-		else:
-		    image_feat, image_info = get_image_info(db_path+'/image_info.db',flickr_id)
-			
-		data.append(list(user_feat) + list(image_feat))
-	return data
-
-def load_deep_features(ids_list, path_A, path_B, db, feat):
-
-	data = []
-	con = lite.connect(db)
-	cur = con.cursor()
-	for flickr_id in ids_list:
-		rows = cur.execute('SELECT '+ feat +' FROM Cnndata WHERE FlickrId == \''+flickr_id+'\'')
-		f = json.loads(rows.next()[0])
-
-		if 'google' in db.split('_') and feat == 'feat_1':
-			f = np.array(f).flatten().squeeze().tolist()
-
-		data.append(f)
-	con.close()
-	return data
-
-def load_popularity_seq(flickr_ids,path,day=30):
-
-	data = []
-	with open(path+'ds_'+str(day)+'_days.pickle','r') as f:
-		sequences = pickle.load(f)
-		id_seq = [x[0] for x in sequences]
-		for flickr_id in flickr_ids:
-			idx = id_seq.index(flickr_id)
-			seq = sequences[idx][2]
-			data.append(seq)
-	return data
-
-# Khosla's popularity score
-def pop_score(c,days):
-	c = float(c)
-	return math.log(c/days + 1,2)
-	
-
-def performance(A,B):
-    A = np.array(A, dtype=float)
-    B = np.array(B, dtype=float)
-   
-    #squared error
-    SE = (A-B) ** 2
-    #absolute error
-    ABS = np.abs(A-B)
-#    SEP = ((A-B)/A) ** 2
-    return SE, ABS
-
-
-def root_mean_squared_error(y_true, y_pred):
-	return K_BACKEND.sqrt(K_BACKEND.square((y_pred - y_true), axis=1))
-
-
-def load_deep_features(ids_list, path_A, path_B, db, feat):
-
-	data = []
-	con = lite.connect(db)
-	cur = con.cursor()
-	for flickr_id in ids_list:
-		rows = cur.execute('SELECT '+ feat +' FROM Cnndata WHERE FlickrId == \''+flickr_id+'\'')
-		f = json.loads(rows.next()[0])
-
-		if 'google' in db.split('_') and feat == 'feat_1':
-			f = np.array(f).flatten().squeeze().tolist()
-
-		data.append(f)
-	con.close()
-	return data
-
-
-
-def define_merge_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm_size= 128, stateful=False, return_state=False):
-	# feature model
-	inputs1 = Input(shape=(feat_dim,))
-
-
-	# model 01
-#	fe1 = Dropout(0.5)(inputs1)
-#	fe2 = Dense(100, activation='relu')(fe1) #256
-	# model 02
-	fe1 = Dense(ff_size, activation='relu')(inputs1) #256
-#	fe2 = Dropout(0.5)(fe1)
-
-#	fe2 = Dense(256, activation='relu')(fe1)
-	# sequence model
-	inputs2 = Input(shape=(1,seq_dim))		# shape = (timesteps, featdim)
-	#se1 = Dense(256, activation='relu')(inputs2)
-	#se1 = Embedding(1, 256, mask_zero=True)(inputs2)
-	#se2 = Dropout(0.5)(se1)
-	#se3 = LSTM(256)(se2)
-	se3 = LSTM(lstm_size, stateful=stateful, return_state=return_state)(inputs2)   # 256
-
-	# IMPLEMENTARE CONSTRAINT SEQ NON DECRESCENTI.. TODO: AGGIUNGERE ALL INPUT SEQ, IL VALORE PRECEDENTE E INSERIRLO COME INPUT DI MAXIMUM
-#	max_out = Maximum()([se3,prec])
-
-	# INJECT MODEL!!
-	#input_state = Input(shape=(15,))
-	#state_init = Dense(128,activation='tanh')(input_state)
-	#ss = LSTM(128)(inputs2,initial_state = [state_init,state_init])
-
-	# decoder model
-#	decoder1 = add([fe2, se3])
-	# MOD 5	
-	decoder1 = concatenate([fe1, se3])
-	#decoder2 = Dense(256, activation='relu')(decoder1)
-	out = Dense(1)(decoder1)
-	# tie it together [image, shape+seq] [seq]
-	model = Model(inputs=[inputs1, inputs2], outputs=out)
-	model.compile(loss='mean_squared_error', optimizer='adam')
-#	model.compile(loss=root_mean_squared_error, optimizer='rmsprop')
-	# summarize model
-	print(model.summary())
-	#plot_model(model, to_file='model.png', show_shapes=True)
-	return model
-
-
-
-def define_merge_constrained_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm_size= 128, stateful=False, return_state=False):
-
-	# feature
-	inputs1 = Input(shape=(feat_dim,))
-	fe1 = Dense(ff_size, activation='relu')(inputs1) #256
-
-	# sequential
-	inputs2 = Input(shape=(1,seq_dim))		# shape = (timesteps, featdim)
-	se3 = LSTM(lstm_size, stateful=stateful, return_state=return_state)(inputs2)   # 256
-
-	decoder1 = concatenate([fe1, se3])
-	#decoder2 = Dense(256, activation='relu')(decoder1)
-	out = Dense(1)(decoder1)
-
-	# QUESTO LAYER IMPONE LA NON DECRESCENZA DELLE SEQUENZE DI OUTPUT
-	# NON FUNZIONA PERCHE' Maximum NON E' UN LAYER VALIDO PER LA GENERAZIONE DI OUTPUT
-#	max_out = Maximum()([out,inputs2[0]])
-#	max_out = keras.layers.maximum([out,inputs2[0]])
-
-	max_out = Lambda(lambda x: K_BACKEND.max(x))([out,inputs2[:,:,0]])
-
-	# tie it together [image, shape+seq] [seq]
-	model = Model(inputs=[inputs1, inputs2], outputs=max_out)
-	model.compile(loss='mean_squared_error', optimizer='adam')
-#	model.compile(loss=root_mean_squared_error, optimizer='rmsprop')
-	# summarize model
-	print(model.summary())
-	#plot_model(model, to_file='model.png', show_shapes=True)
-	return model
-
-
-def transform_data_to_supervised(X_o, shape_ls, centroids, y_o):
-	FEAT_SET = []
-	IN_SEQ_SET = []
-	OUT_SEQ_SET = []
-	for t_idx, x in enumerate(X_o):
-		#x = x[:2]
-	#	- SEQUENTIAL INPUTS
-	#	NB: il valore al giorno zero (0.0) viene eliminato dopo la differenziazione (difference(ss)). 
-
-		# TRANSFORM THE SEQUENCES TO BE STATIONARY
-		# load the shape (sequential data)
-		l = shape_ls[t_idx]
-		ss = centroids[l]
-		ss = np.array(ss)		# shape
-		if NORM_DIFF:
-			shape_diff = difference(ss)
-			# NB: i prototipi (shape) hanno dimensione 31, quindi non inserisco lo zero iniziale 
-		else:
-			shape_diff = ss
-	
-		# load the views dynamic (sequential data)
-		seq = y_o[t_idx]
-		seq = np.insert(seq,0,0)
-		if NORM_DIFF:
-			seq_diff = difference(seq)
-			IN_SEQ_SET.append([0.0,0.0])	# inserisco questa coppia solo se NORM_DIFF == True
-		else:
-			seq_diff = seq
-
-#		IN_SEQ_SET.append([0.0,0.0])
-		OUT_SEQ_SET.append([seq_diff[0]]) # seq_diff[0] ==>> primo valore da predire ( 0.0 ==> p1 )
-		for v_i in range(len(seq_diff)-1):
-			seq_in = [seq_diff[v_i], shape_diff[v_i]]
-			IN_SEQ_SET.append(seq_in)		#inputs2
-			OUT_SEQ_SET.append([seq_diff[v_i+1]])
-	
-		#print len(IN_SEQ_SET)
-		#sys.exit(0)
-		# ogni 30 righe di train_in_seq rappresentano i dati di una immagine (una aggiunta prima del for e le altre 29 dentro il for)
-	
-		"""
-		# DEBUG
-		print len(ss)
-		print ss
-		print shape_diff
-	#	print inverse_difference(diff)
-		print '\n'
-	#	seq = np.insert(seq,0,0)
-		print len(seq)
-		print seq
-	#	diff = difference(seq)
-		print seq_diff
-	#	print inverse_difference(diff)
-		sys.exit(0)
-		"""
-
-	#	- NOT-SEQUENTIAL INPUT
-		for i in range(len(seq)-1):
-			FEAT_SET.append(x)
-	return FEAT_SET, IN_SEQ_SET, OUT_SEQ_SET		# 15x30 2x30 1x30 per ogni dato
-
-def difference(series):
-	diff = []
-	for i in range(1,len(series)):
-		diff.append(series[i]-series[i-1])
-	return diff
-
-def inverse_difference(diff):
-	series = [0.0]
-	for i in range(len(diff)):
-		series.append(series[i] + diff[i])
-	return series
 
 
 #---------------------------------------------------------------------------------------#
@@ -458,7 +174,7 @@ Y = sequences
 
 
 #	- SOCIAL FEATURES
-X = load_features(flickr_ids,dbs_A_path,dbs_B_path)
+X = load_features(flickr_ids,dbs_A_path,dbs_B_path, verbose = VERBOSE)
 
 
 #	- PREDICTED SHAPES (LOAD THE CLASSIFIER)
@@ -519,7 +235,7 @@ train_features = []
 train_in_seq = []
 train_out_seq = []
 
-train_features, train_in_seq, train_out_seq = transform_data_to_supervised(X_train_o, train_shape_ls, centroids, y_train)
+train_features, train_in_seq, train_out_seq = transform_data_to_supervised(X_train_o, train_shape_ls, centroids, y_train, norm_diff=NORM_DIFF)
 """
 print np.array(train_features)
 print np.array(train_in_seq)
@@ -547,7 +263,7 @@ seq_scaler = seq_scaler.fit(train_out_seq)
 OUT_SEQ_train =  seq_scaler.transform(train_out_seq)
 
 
-test_features, test_in_seq, test_out_seq = transform_data_to_supervised(X_test_o, test_shape_ls, centroids, y_test)
+test_features, test_in_seq, test_out_seq = transform_data_to_supervised(X_test_o, test_shape_ls, centroids, y_test, norm_diff=NORM_DIFF)
 
 # TEST DATA
 # Transform the test features according to the learned scaler
