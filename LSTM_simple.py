@@ -275,9 +275,9 @@ IN_SEQ_test =  in_seq_scaler.transform(test_in_seq)
 #
 #  MODEL DEFINITION
 #
-#LSTM_model, m_summary = define_model(MOD, seq_neurons= 128, nseq_neurons = 128)
-LSTM_model = define_merge_model(feat_dim = len(X_train[0]), ff_size= 128, seq_dim = len(IN_SEQ_train[0]), lstm_size= 256, stateful = False, return_state=RET_STATES)
-#LSTM_model = define_merge_constrained_model(feat_dim = len(X_train[0]), ff_size= 64, seq_dim = len(IN_SEQ_train[0]), lstm_size= 128, stateful = False, return_state=RET_STATES)
+### OLD ### LSTM_model, m_summary = define_model(MOD, seq_neurons= 128, nseq_neurons = 128)
+#LSTM_model = define_merge_model(feat_dim = len(X_train[0]), ff_size= 128, seq_dim = len(IN_SEQ_train[0]), lstm_size= 256, stateful = False, return_state=RET_STATES)
+LSTM_model = define_merge_constrained_model(feat_dim = len(X_train[0]), ff_size= 64, seq_dim = len(IN_SEQ_train[0]), lstm_size= 128, stateful = False, return_state=RET_STATES)
 
 
 #	SUMMARY:
@@ -321,16 +321,14 @@ for ep in range(n_epochs):
 	# TODO: TENSORBOARD CALLBACK
 	hist = LSTM_model.fit([LSTM_X1,LSTM_X2],LSTM_Y, epochs=1,batch_size=batch_size,shuffle=False) #,callbacks=[checkpoint])
         train_loss.append(np.mean(hist.history['loss']))
-	print "HISTORY LOSS LEN"
-	print len(hist.history['loss'])
-	print "HISTORY LOSS LEN"
-
+	
+	
 	# reset_states
 	LSTM_model.reset_states()
 
 
 	# DEBUG OUT
-	if ep == 1999: #ep % 50 == 0: #and t_idx % 10 == 0:
+	if ep % 50 == 0 and t_idx > 55 == 0:
 		s = sequences[t_idx]
 		s = np.array(s)
 		print "\n"
@@ -401,6 +399,11 @@ for ep in range(n_epochs):
 			plt.savefig('train_ep'+str(ep)+'_'+img_id+'.png')
 			plt.show()
 
+plt.figure()
+plt.plot(train_loss)
+plt.title("Train loss")
+plt.savefig("train_loss.png')
+plt.show()
     # for each epoch --> loss
 """
 print "\nSaving the model..."

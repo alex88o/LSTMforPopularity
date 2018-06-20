@@ -82,8 +82,11 @@ def define_merge_constrained_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm
 #	max_out = Maximum()([out,inputs2[0]])
 #	max_out = keras.layers.maximum([out,inputs2[0]])
 
-	max_out = Lambda(lambda x: K_BACKEND.max(x))([out,inputs2[:,:,0]])
-
+	#non funziona..
+	#max_out = Lambda(lambda x: K_BACKEND.max(x))([out,inputs2[:,:,0]])
+	# Questa funziona, nel senso che viene accettato il modello definito in questo modo e keras avvia il training
+	max_out = Lambda(lambda oi: K_BACKEND.maximum(oi[0], oi[1][:,:,0]),output_shape=lambda oi : oi[0])([out,inputs2])	
+	
 	# tie it together [image, shape+seq] [seq]
 	model = Model(inputs=[inputs1, inputs2], outputs=max_out)
 	model.compile(loss='mean_squared_error', optimizer='adam')
@@ -92,3 +95,9 @@ def define_merge_constrained_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm
 	print(model.summary())
 	#plot_model(model, to_file='model.png', show_shapes=True)
 	return model
+
+
+
+
+
+
