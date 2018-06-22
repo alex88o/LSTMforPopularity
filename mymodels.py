@@ -51,7 +51,7 @@ def define_merge_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm_size= 128, 
 	# MOD 5	
 	decoder1 = concatenate([fe1, se3])
 	#decoder2 = Dense(256, activation='relu')(decoder1)
-	out = Dense(1)(decoder1)
+	out = Dense(1,activation='sigmoid')(decoder1)
 	# tie it together [image, shape+seq] [seq]
 	model = Model(inputs=[inputs1, inputs2], outputs=out)
 	model.compile(loss='mean_squared_error', optimizer='adam')

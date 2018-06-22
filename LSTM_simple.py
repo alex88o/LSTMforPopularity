@@ -8,6 +8,8 @@
 #usage:			
 #notes:
 #==============================================================================
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 #from __future__ import print_function
 import sys
@@ -56,7 +58,7 @@ from keras.layers.merge import concatenate
 
 # custom
 from mymodels import define_merge_model, define_merge_constrained_model
-from utils import load_popularity_seq, load_features, transform_data_to_supervised, inverse_difference
+from utils import load_popularity_seq, load_features, transform_data_to_supervised, inverse_difference, performance
 parser = SafeConfigParser()
 
 
@@ -72,9 +74,6 @@ clustering_results_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\Popula
 shape_classifier_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification\\rndforest_20_class.pkl'
 #feats_path = 'C:\Users\\aless\Documents\Dottorato di Ricerca\PopularityChallenge\george\classification'
 """
-
-
-
 
 
 
@@ -97,7 +96,7 @@ seq_path = parser.get(machine,'seq_path')
 VERBOSE = True
 K = 50  # 40
 NUM_TRIALS = 1
-n_epochs = 2000
+n_epochs = 20000
 NORM_DIFF = True
 RET_STATES = False
 # Input 01:	seq_in: views+shape(vs), nseq_in: social(x)
@@ -107,7 +106,8 @@ RET_STATES = False
 #if not os.path.exists(OUT_DIR):
 #    os.makedirs(OUT_DIR)
 
-START_VAL = -1.0  # minimum of tanh function
+START_VAL = 0.0
+
 #### END SETTINGS ####
 
 #
@@ -253,12 +253,12 @@ X_train = scaler.transform(train_features)
 
 
 # FIT INPUT SEQUENCE SCALER 
-in_seq_scaler = MinMaxScaler(feature_range= (-1,1))
+in_seq_scaler = MinMaxScaler(feature_range= (0,1))
 in_seq_scaler = in_seq_scaler.fit(train_in_seq)
 IN_SEQ_train =  in_seq_scaler.transform(train_in_seq)
 
 # FIT OUT SEQUENCE SCALER 
-seq_scaler = MinMaxScaler(feature_range= (-1,1))
+seq_scaler = MinMaxScaler(feature_range= (0,1))
 seq_scaler = seq_scaler.fit(train_out_seq)
 OUT_SEQ_train =  seq_scaler.transform(train_out_seq)
 
@@ -276,8 +276,8 @@ IN_SEQ_test =  in_seq_scaler.transform(test_in_seq)
 #  MODEL DEFINITION
 #
 ### OLD ### LSTM_model, m_summary = define_model(MOD, seq_neurons= 128, nseq_neurons = 128)
-#LSTM_model = define_merge_model(feat_dim = len(X_train[0]), ff_size= 128, seq_dim = len(IN_SEQ_train[0]), lstm_size= 256, stateful = False, return_state=RET_STATES)
-LSTM_model = define_merge_constrained_model(feat_dim = len(X_train[0]), ff_size= 64, seq_dim = len(IN_SEQ_train[0]), lstm_size= 128, stateful = False, return_state=RET_STATES)
+LSTM_model = define_merge_model(feat_dim = len(X_train[0]), ff_size= 64, seq_dim = len(IN_SEQ_train[0]), lstm_size= 128, stateful = False, return_state=RET_STATES)
+#LSTM_model = define_merge_constrained_model(feat_dim = len(X_train[0]), ff_size= 64, seq_dim = len(IN_SEQ_train[0]), lstm_size= 128, stateful = False, return_state=RET_STATES)
 
 
 #	SUMMARY:
@@ -397,13 +397,13 @@ for ep in range(n_epochs):
 			plt.legend(loc='best')
 			plt.draw()
 			plt.savefig('train_ep'+str(ep)+'_'+img_id+'.png')
-			plt.show()
+			#plt.show()
 
 plt.figure()
 plt.plot(train_loss)
 plt.title("Train loss")
-plt.savefig("train_loss.png')
-plt.show()
+plt.savefig("train_loss.png")
+#plt.show()
     # for each epoch --> loss
 """
 print "\nSaving the model..."
