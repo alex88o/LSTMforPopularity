@@ -36,7 +36,10 @@ def define_merge_model(feat_dim = 15, ff_size= 64, seq_dim = 2, lstm_size= 128, 
 	#se1 = Embedding(1, 256, mask_zero=True)(inputs2)
 	#se2 = Dropout(0.5)(se1)
 	#se3 = LSTM(256)(se2)
-	se3 = LSTM(lstm_size, stateful=stateful, return_state=return_state)(inputs2)   # 256
+	if return_state:
+		se3, h, c = LSTM(lstm_size, stateful=stateful, return_state=return_state)(inputs2)   # 256		
+	else:
+		se3 = LSTM(lstm_size, stateful=stateful, return_state=return_state)(inputs2)   # 256
 
 	# IMPLEMENTARE CONSTRAINT SEQ NON DECRESCENTI.. TODO: AGGIUNGERE ALL INPUT SEQ, IL VALORE PRECEDENTE E INSERIRLO COME INPUT DI MAXIMUM
 #	max_out = Maximum()([se3,prec])
